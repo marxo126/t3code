@@ -1,7 +1,10 @@
 import { Sheet } from "../../components/ui/Sheet";
 import { ListActionRow } from "../../components/ui/ListActionRow";
 import { ListSection } from "../../components/ui/ListSection";
-import { collectMobileAssistantTextSelectors } from "../../lib/assistantCitationSelection";
+import {
+  collectMobileAssistantTextSelectors,
+  locateMobileAssistantCitation,
+} from "../../lib/assistantCitationSelection";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { ASSISTANT_CITATION_MAX_TEXT_LENGTH, type AssistantCitation } from "@t3tools/contracts";
@@ -165,6 +168,7 @@ import {
   type NativeMarkdownTextStyle,
   type SelectableMarkdownSkill,
 } from "../../native/SelectableMarkdownText";
+import { pendingThreadMessageJumpQuote, type ThreadMessageJumpQuote } from "./threadMessageJump";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/ui/VideoPreviewModal";
@@ -1146,6 +1150,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly environmentId: EnvironmentId;
   readonly citationSource?: Pick<AssistantCitation, "threadId" | "messageId">;
   readonly onCiteAssistantText?: (citation: AssistantCitation) => void;
+  readonly highlight?: ThreadMessageJumpQuote | undefined;
   readonly markdownStyles: MarkdownStyleSet;
   readonly linkHandlers: MarkdownLinkHandlers;
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
@@ -1171,6 +1176,11 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   };
   const models = useModelMentions(props.environmentId, props.markdown);
   const threadIcons = useThreadChipIcons(props.environmentId, liveMarkdown);
+  const located = props.highlight
+    ? locateMobileAssistantCitation(liveMarkdown, props.highlight.text, props.highlight.occurrence)
+    : null;
+  const highlight =
+    located && props.highlight ? { ...located, text: props.highlight.text } : undefined;
   const linkHandlers: MarkdownLinkHandlers = {
     ...props.linkHandlers,
     linkCustomization: (href) =>
@@ -1181,6 +1191,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
     <>
       <AssistantMarkdownBlocks
         markdown={liveMarkdown}
+        highlight={highlight}
         onCiteText={
           props.onCiteAssistantText && props.citationSource
             ? (text, path) => {
@@ -1239,6 +1250,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
 function AssistantMarkdownBlocks(props: {
   readonly markdown: string;
   readonly citationPath?: string;
+  readonly highlight?: { readonly path: string; readonly index: number; readonly text: string };
   readonly onCiteText?: (text: string, path: string) => void;
   readonly markdownStyles: MarkdownStyleSet;
   readonly linkHandlers: MarkdownLinkHandlers;
@@ -1284,6 +1296,7 @@ function AssistantMarkdownBlocks(props: {
         );
       }
       if (segment.markdown.trim().length === 0) return null;
+      const citationPath = `${props.citationPath ?? ""}${blockIndex}:${segmentIndex}`;
       return (
         <SelectableMarkdownText
           key={`markdown:${offset}`}
@@ -1292,14 +1305,10 @@ function AssistantMarkdownBlocks(props: {
           models={props.models}
           textStyle={props.markdownStyles.nativeTextStyle}
           onCiteText={
-            props.onCiteText
-              ? (text) =>
-                  props.onCiteText?.(
-                    text,
-                    `${props.citationPath ?? ""}${blockIndex}:${segmentIndex}`,
-                  )
-              : undefined
+            props.onCiteText ? (text) => props.onCiteText?.(text, citationPath) : undefined
           }
+          highlightText={props.highlight?.path === citationPath ? props.highlight.text : undefined}
+          highlightOccurrence={props.highlight?.index}
           {...props.linkHandlers}
           renderImage={props.renderImage}
         />
@@ -1702,6 +1711,14 @@ function RunFoldButton({
   );
 }
 
+interface CitationHighlight {
+  readonly messageId: MessageId;
+  readonly quote: ThreadMessageJumpQuote;
+}
+
+// Matches web's citation pulse: long enough to find the quote after the jump.
+const CITATION_HIGHLIGHT_MS = 3000;
+
 function renderFeedEntry(
   info: { item: ThreadFeedRow; index: number },
   props: Pick<
@@ -1716,6 +1733,7 @@ function renderFeedEntry(
     | "workspaceRoot"
   > & {
     readonly copiedRowId: string | null;
+    readonly citationHighlight: CitationHighlight | null;
     readonly expandedWorkRows: Record<string, boolean>;
     readonly workRowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
     readonly workGroupScrollPositions: Map<string, ThreadWorkGroupScrollPosition>;
@@ -2341,6 +2359,11 @@ function renderFeedEntry(
               environmentId={props.environmentId}
               citationSource={{ threadId: props.threadId, messageId: message.id }}
               onCiteAssistantText={props.onCiteAssistantText}
+              highlight={
+                props.citationHighlight?.messageId === message.id
+                  ? props.citationHighlight.quote
+                  : undefined
+              }
               markdownStyles={styles}
               linkHandlers={props.markdownLinkHandlers}
               onUseArtifactTemplate={props.onUseArtifactTemplate}
@@ -2794,6 +2817,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   );
   const { themeAppearance } = useAppearancePreferences();
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const citationHighlightTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const headerMaterialVisibleRef = useRef(false);
   const { width: windowWidth, fontScale } = useWindowDimensions();
   const { appearance } = useAppearancePreferences();
@@ -2819,15 +2843,23 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     readonly expandedWorkRows: Record<string, boolean>;
     readonly expandedTurnIds: ReadonlySet<RunId>;
     readonly revealedMessageId: MessageId | null;
+    readonly citationHighlight: CitationHighlight | null;
   }>({
     copiedRowId: null,
     expandedWorkGroups: {},
     expandedWorkRows: {},
     expandedTurnIds: new Set(),
     revealedMessageId: null,
+    citationHighlight: null,
   });
-  const { copiedRowId, expandedWorkGroups, expandedWorkRows, expandedTurnIds, revealedMessageId } =
-    interactionState;
+  const {
+    copiedRowId,
+    expandedWorkGroups,
+    expandedWorkRows,
+    expandedTurnIds,
+    revealedMessageId,
+    citationHighlight,
+  } = interactionState;
   const markdownLinkRequest = useRef<AbortController | null>(null);
   const onInlinePlaybackStart = () => {
     markdownLinkRequest.current?.abort();
@@ -3348,6 +3380,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     dispatchingMessageId: props.dispatchingMessageId,
     unsettledTurnId,
     copiedRowId,
+    citationHighlight,
     expandedWorkGroups,
     expandedWorkRows,
     workRowSizing,
@@ -3440,6 +3473,19 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const jumpIndex = jumpReady
     ? presentedFeed.findIndex((entry) => entry.type === "message" && entry.id === jumpToMessageId)
     : null;
+  const highlightJumpQuote = () => {
+    const quote = pendingThreadMessageJumpQuote(feedThreadKey);
+    if (!quote || !jumpToMessageId) return;
+    const highlight = { messageId: jumpToMessageId, quote };
+    setInteractionState((current) => ({ ...current, citationHighlight: highlight }));
+    if (citationHighlightTimeoutRef.current) clearTimeout(citationHighlightTimeoutRef.current);
+    citationHighlightTimeoutRef.current = setTimeout(() => {
+      setInteractionState((current) =>
+        current.citationHighlight === highlight ? { ...current, citationHighlight: null } : current,
+      );
+      citationHighlightTimeoutRef.current = null;
+    }, CITATION_HIGHLIGHT_MS);
+  };
   const landJump = useEffectEvent((index: number) => {
     const list = listRef.current;
     if (!list) return;
@@ -3447,7 +3493,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     const positioning =
       index === -1 ? undefined : list.scrollToIndex({ index, viewPosition: 0.2, animated: false });
     void Promise.resolve(positioning).then(() => {
-      if (!cancelled && listRef.current === list) props.onJumpedToMessage?.();
+      if (cancelled || listRef.current !== list) return;
+      if (index !== -1) highlightJumpQuote();
+      props.onJumpedToMessage?.();
     });
     return () => {
       cancelled = true;
@@ -3511,6 +3559,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   useEffect(
     () => () => {
       if (copyFeedbackTimeoutRef.current) clearTimeout(copyFeedbackTimeoutRef.current);
+      if (citationHighlightTimeoutRef.current) clearTimeout(citationHighlightTimeoutRef.current);
       if (disclosureMotionTimer.current !== null) clearTimeout(disclosureMotionTimer.current);
       if (disclosureSettleFrameRef.current !== null) {
         cancelAnimationFrame(disclosureSettleFrameRef.current);
@@ -3760,6 +3809,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             onCiteAssistantText: props.onCiteAssistantText,
             threadId: props.threadId,
             copiedRowId,
+            citationHighlight,
             expandedWorkRows,
             workRowSizing,
             workGroupScrollPositions,

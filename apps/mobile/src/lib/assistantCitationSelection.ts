@@ -104,3 +104,30 @@ export function collectMobileAssistantTextSelectors(markdown: string, path: stri
     return selector ? [{ ...selector, text, occurrence: { index, count: matches.length } }] : [];
   });
 }
+
+/** The Markdown segment holding a citation's quote, and which of its matches the citation means. */
+export function locateMobileAssistantCitation(
+  markdown: string,
+  text: string,
+  occurrence?: { readonly index: number },
+): { path: string; index: number } | null {
+  const normalize = (value: string) => value.replace(/\s+/g, " ");
+  if (!text.trim()) return null;
+  const quote = normalize(text);
+  const segments = citationSegments(markdown);
+  const target = occurrences(normalize(segments.map((entry) => entry.text).join("\n")), quote)[
+    occurrence?.index ?? 0
+  ];
+  if (target === undefined) return null;
+  // Offsets as `collectMobileAssistantTextSelectors` computes them, so whitespace collapses the same.
+  for (const [segmentIndex, segment] of segments.entries()) {
+    const leading = segments
+      .slice(0, segmentIndex)
+      .map((entry) => entry.text)
+      .join("\n");
+    const offset = normalize(leading + (segmentIndex > 0 ? "\n" : "")).length;
+    const index = occurrences(normalize(segment.text), quote).indexOf(target - offset);
+    if (index !== -1) return { path: segment.path, index };
+  }
+  return null;
+}

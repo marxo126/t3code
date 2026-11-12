@@ -7,7 +7,7 @@ import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import type { SelectableMarkdownTextProps } from "./SelectableMarkdownText.types";
 
 import { MobileEnrichedMarkdownText } from "./EnrichedMarkdownText";
-import { themeColorWithAlpha } from "../lib/mobileTheme";
+import { flattenThemeColor, themeColorWithAlpha } from "../lib/mobileTheme";
 import { useUniwindTheme } from "../lib/useUniwindTheme";
 
 export type {
@@ -27,10 +27,15 @@ export function SelectableMarkdownText(props: SelectableMarkdownTextProps) {
   const theme = useUniwindTheme();
   const selectionColor = themeColorWithAlpha(theme["--color-focus"], 0.32);
   const selectionHandleColor = theme["--color-focus"];
+  // Matches web's citation highlight; the native renderer drops translucent colors.
+  const highlightColor = flattenThemeColor(
+    themeColorWithAlpha(theme["--color-focus"], 0.45),
+    theme["--color-screen"],
+  );
   const textStyle =
     Platform.OS === "android"
-      ? { selectionColor, selectionHandleColor, ...props.textStyle }
-      : props.textStyle;
+      ? { selectionColor, selectionHandleColor, highlightColor, ...props.textStyle }
+      : { highlightColor, ...props.textStyle };
   return (
     <>
       <MobileEnrichedMarkdownText

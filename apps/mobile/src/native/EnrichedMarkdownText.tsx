@@ -32,6 +32,7 @@ import { useRetryingImageSource } from "./useRetryingImageSource";
 import * as Dialog from "../components/ui/Dialog";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import type { HighlightScheme } from "../lib/highlights";
+import { highlightQuoteInMarkdown } from "../lib/citationHighlight";
 import {
   ENRICHED_INLINE_FILE_LINK_REGEX,
   enrichedTextLinkRegex,
@@ -353,9 +354,25 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   }, [props.textStyle, props.textAlign, themeAppearance, fontScale]);
   // Link variants change as a message streams. The code renderer reads only the base style, so
   // it stays the same function and the library keeps its rendered blocks.
+  const highlightedMarkdown = props.highlightText
+    ? highlightQuoteInMarkdown(markdown, props.highlightText, props.highlightOccurrence)
+    : null;
   const markdownStyle = useMemo(
-    () => ({ ...baseMarkdownStyle, linkVariants }),
-    [baseMarkdownStyle, linkVariants],
+    () => ({
+      ...baseMarkdownStyle,
+      linkVariants,
+      highlight: {
+        color: props.textStyle.color,
+        backgroundColor: props.textStyle.highlightColor ?? props.textStyle.selectionColor,
+      },
+    }),
+    [
+      baseMarkdownStyle,
+      linkVariants,
+      props.textStyle.color,
+      props.textStyle.highlightColor,
+      props.textStyle.selectionColor,
+    ],
   );
   const renderers = {
     image: renderImage
@@ -405,7 +422,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
         }}
       >
         <EnrichedMarkdownText
-          markdown={markdown}
+          markdown={highlightedMarkdown ?? markdown}
           markdownStyle={markdownStyle}
           writingDirection={props.writingDirection}
           onLinksChange={onLinksChange}
@@ -439,6 +456,8 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
             hardSoftBreaks: props.preserveSoftBreaks ?? false,
             admonitions: true,
             preserveWindowsPaths: true,
+            // Only while highlighting, so a literal `==` in a message stays text.
+            highlight: highlightedMarkdown !== null,
           }}
           enableTaskListItemToggle={props.onTaskListItemPress !== undefined}
           onTaskListItemPress={props.onTaskListItemPress}

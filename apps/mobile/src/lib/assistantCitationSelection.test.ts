@@ -1,5 +1,8 @@
 import { expect, it } from "vite-plus/test";
-import { collectMobileAssistantTextSelectors } from "./assistantCitationSelection";
+import {
+  collectMobileAssistantTextSelectors,
+  locateMobileAssistantCitation,
+} from "./assistantCitationSelection";
 import {
   findAssistantCitationText,
   serializeAssistantCitation,
@@ -14,6 +17,19 @@ it("offers distinct source choices within a block and maps recursive folds witho
   const second = collectMobileAssistantTextSelectors(markdown, "1/1/0:0", "quote")[0];
   expect(first?.occurrence).toEqual({ index: 0, count: 2 });
   expect(second?.occurrence).toEqual({ index: 1, count: 2 });
+  expect(locateMobileAssistantCitation(markdown, "quote", first!.occurrence)).toEqual({
+    path: "0:0",
+    index: 0,
+  });
+  expect(locateMobileAssistantCitation(markdown, "quote", second!.occurrence)).toEqual({
+    path: "1/1/0:0",
+    index: 0,
+  });
+  expect(locateMobileAssistantCitation("go now, then go now", "go now", { index: 1 })).toEqual({
+    path: "0:0",
+    index: 1,
+  });
+  expect(locateMobileAssistantCitation(markdown, "quote", { index: 2 })).toBeNull();
   const rendered = `${"x".repeat(40)}quote${"x".repeat(40)} ${"x".repeat(40)}quote${"x".repeat(40)}`;
   expect(findAssistantCitationText(rendered, second!)).toEqual({
     start: rendered.lastIndexOf("quote"),

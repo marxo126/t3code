@@ -99,7 +99,10 @@ export function AssistantCitationSheet(props: {
             onPress={() => {
               if (commentTooLong) return;
               close();
-              requestThreadMessageJump(scopedThreadKey(citation), citation.messageId);
+              requestThreadMessageJump(scopedThreadKey(citation), citation.messageId, {
+                text: citation.text,
+                occurrence: citation.occurrence,
+              });
               openLinkedThread(citation);
             }}
           />
