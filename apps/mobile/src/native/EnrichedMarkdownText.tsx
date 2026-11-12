@@ -420,6 +420,17 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
           containerStyle={{ flexShrink: 1, minWidth: 0 }}
           flavor="github"
           selectable
+          contextMenuItems={
+            props.onCiteText
+              ? [
+                  {
+                    text: "Cite",
+                    icon: "quote.bubble",
+                    onPress: ({ text, selection }) => props.onCiteText?.(text, selection),
+                  },
+                ]
+              : undefined
+          }
           selectionClipboard={selectionClipboard}
           selectionColor={props.textStyle.selectionColor}
           selectionHandleColor={props.textStyle.selectionHandleColor}

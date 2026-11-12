@@ -77,6 +77,11 @@ export interface SelectableMarkdownTextProps {
   readonly models?: ReadonlyArray<SelectableMarkdownModel>;
   readonly preserveSoftBreaks?: boolean;
   readonly onLinkPress?: (href: string) => void;
+  /** `selection` holds offsets local to the native text view the user selected in. */
+  readonly onCiteText?: (
+    text: string,
+    selection: { readonly start: number; readonly end: number },
+  ) => void;
   readonly fileContextMenu?: (href: string) => MarkdownFileContextMenu | undefined;
   readonly onFileContextMenuAction?: (href: string, actionId: string) => void;
   readonly linkCustomization?: (href: string) => MarkdownLinkCustomization | undefined;

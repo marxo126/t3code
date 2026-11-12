@@ -1,5 +1,6 @@
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
+import { ASSISTANT_CITATION_MAX_TEXT_LENGTH, type AssistantCitation } from "@t3tools/contracts";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useWorkspaceSettledContentWidth } from "../layout/workspace-content-width";
 import { ThreadMarkdownVideo, ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
@@ -60,7 +61,6 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import type { ToolCallVisibility } from "@t3tools/contracts/settings";
-import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import { hostedThreadLink, parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { PROMPT_LINK_MAX_PROMPT_LENGTH } from "@t3tools/shared/promptLinks";
@@ -150,6 +150,11 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { splitMarkdownDetails } from "../../lib/markdownDetails";
+import {
+  assistantCitationFromNativeSelection,
+  assistantMarkdownDetailsKeyPrefix,
+  assistantMarkdownSegmentKey,
+} from "../../lib/assistantCitationSelection";
 import { hasWideMarkdownBlock } from "../../lib/wideMarkdownBlocks";
 import {
   SelectableMarkdownText,
@@ -347,6 +352,7 @@ export interface ThreadFeedProps {
   readonly onIsAtEndChange?: (isAtEnd: boolean) => void;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
+  readonly onCiteAssistantText?: (citation: AssistantCitation) => void;
 }
 
 const USER_MESSAGE_COPY_MENU_ACTIONS = [
@@ -1138,6 +1144,8 @@ function ArtifactTemplateCard(props: {
 const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly markdown: string;
   readonly environmentId: EnvironmentId;
+  readonly citationSource?: Pick<AssistantCitation, "threadId" | "messageId">;
+  readonly onCiteAssistantText?: (citation: AssistantCitation) => void;
   readonly markdownStyles: MarkdownStyleSet;
   readonly linkHandlers: MarkdownLinkHandlers;
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
@@ -1156,6 +1164,33 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   return (
     <AssistantMarkdownBlocks
       markdown={liveMarkdown}
+      onCiteText={
+        props.onCiteAssistantText && props.citationSource
+          ? (text, selection, segmentKey) => {
+              if (!text.trim()) return;
+              if (text.length > ASSISTANT_CITATION_MAX_TEXT_LENGTH) {
+                Dialog.alert(
+                  "Quote is too long",
+                  `Select up to ${ASSISTANT_CITATION_MAX_TEXT_LENGTH.toLocaleString()} characters to cite.`,
+                );
+                return;
+              }
+              if (!props.citationSource) return;
+              // Native offsets are local to one rendered view; place them in the whole message.
+              props.onCiteAssistantText?.(
+                assistantCitationFromNativeSelection({
+                  environmentId: props.environmentId,
+                  ...props.citationSource,
+                  markdown: liveMarkdown,
+                  segmentKey,
+                  selectedText: text,
+                  selection,
+                  platform: Platform.OS,
+                }),
+              );
+            }
+          : undefined
+      }
       markdownStyles={props.markdownStyles}
       linkHandlers={linkHandlers}
       onUseArtifactTemplate={props.onUseArtifactTemplate}
@@ -1169,6 +1204,13 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
 // Folds split first, so an artifact card inside a fold stays inside it.
 function AssistantMarkdownBlocks(props: {
   readonly markdown: string;
+  /** Names nested folds so a cited view can be found in the whole message. */
+  readonly keyPrefix?: string;
+  readonly onCiteText?: (
+    text: string,
+    selection: { readonly start: number; readonly end: number },
+    segmentKey: string,
+  ) => void;
   readonly markdownStyles: MarkdownStyleSet;
   readonly linkHandlers: MarkdownLinkHandlers;
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
@@ -1185,6 +1227,7 @@ function AssistantMarkdownBlocks(props: {
       ),
     [props.markdown],
   );
+  const onCiteText = props.onCiteText;
   return blocks.map((block) => {
     if (block.kind === "details") {
       return (
@@ -1193,7 +1236,11 @@ function AssistantMarkdownBlocks(props: {
           summary={block.summary}
           initiallyOpen={block.open}
         >
-          <AssistantMarkdownBlocks {...props} markdown={block.body} />
+          <AssistantMarkdownBlocks
+            {...props}
+            markdown={block.body}
+            keyPrefix={assistantMarkdownDetailsKeyPrefix(props.keyPrefix ?? "", block.sourceOffset)}
+          />
         </MarkdownDetailsFold>
       );
     }
@@ -1216,6 +1263,16 @@ function AssistantMarkdownBlocks(props: {
           skills={props.skills}
           models={props.models}
           textStyle={props.markdownStyles.nativeTextStyle}
+          onCiteText={
+            onCiteText
+              ? (text, selection) =>
+                  onCiteText(
+                    text,
+                    selection,
+                    assistantMarkdownSegmentKey(props.keyPrefix ?? "", offset),
+                  )
+              : undefined
+          }
           {...props.linkHandlers}
           renderImage={props.renderImage}
         />
@@ -1485,7 +1542,7 @@ function ThreadAutomationMessageRow(props: {
           <View className="px-3.5 pb-2.5">
             <MarkdownImageAvailableWidthContext value={props.contentMaxWidth}>
               <UserMessageContent
-                text={renderAssistantCitationsAsText(props.text)}
+                text={props.text}
                 environmentId={props.environmentId}
                 context={props.context}
                 markdownStyles={props.markdownStyles}
@@ -1624,6 +1681,7 @@ function renderFeedEntry(
     ThreadFeedProps,
     | "environmentId"
     | "onUseArtifactTemplate"
+    | "onCiteAssistantText"
     | "skills"
     | "dispatchingMessageId"
     | "onEditPendingMessage"
@@ -1855,7 +1913,7 @@ function renderFeedEntry(
     const { message } = entry;
     const isUser = message.role === "user";
     const presentation = resolveUserMessagePresentation(message);
-    const renderedText = renderAssistantCitationsAsText(presentation.text);
+    const renderedText = presentation.text;
     const styles = isUser ? markdownStyles.user : markdownStyles.assistant;
     const timestampLabel = formatMessageTimestamp(isUser ? message.createdAt : message.updatedAt);
     const attachments = message.attachments ?? [];
@@ -2254,6 +2312,8 @@ function renderFeedEntry(
             <AssistantMarkdownContent
               markdown={renderedText}
               environmentId={props.environmentId}
+              citationSource={{ threadId: props.threadId, messageId: message.id }}
+              onCiteAssistantText={props.onCiteAssistantText}
               markdownStyles={styles}
               linkHandlers={props.markdownLinkHandlers}
               onUseArtifactTemplate={props.onUseArtifactTemplate}
@@ -3253,6 +3313,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // Include turn completion so unchanged message rows reveal their footer and spacing
   // even when the final message update arrives before the turn settles.
   const listAppearanceData = {
+    onCiteAssistantText: props.onCiteAssistantText,
     disclosureLayout,
     reduceMotion,
     worktreeSetup: props.worktreeSetup,
@@ -3669,6 +3730,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             dispatchingMessageId: props.dispatchingMessageId,
             onEditPendingMessage: props.onEditPendingMessage,
             onUseArtifactTemplate: props.onUseArtifactTemplate,
+            onCiteAssistantText: props.onCiteAssistantText,
             threadId: props.threadId,
             copiedRowId,
             expandedWorkRows,
